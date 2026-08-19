@@ -1,0 +1,242 @@
+# ============================================================
+# Stable Diffusion WebUI (Colab) セットアップ本体
+#
+# ★正本。ここを直せば、全員が次回の起動から自動で最新になる。
+#   生徒さんのノートブックを貼り替える必要はない。
+#
+# 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
+# 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
+# ============================================================
+SETUP_VERSION = '2026-08-19a'
+
+import os, shutil, threading, json, subprocess
+from google.colab import drive, runtime
+
+print('=' * 54)
+print(f'  Stable Diffusion セットアップ　版：{SETUP_VERSION}')
+print('=' * 54)
+
+
+def _opt(name, default):
+    """ノートブック側で設定された値を読む。無ければ既定値を使う。
+    ★古いノートブックから呼ばれても落ちないように、必ず既定値を持たせること。"""
+    return globals().get(name, default)
+
+
+def sh(cmd, cwd=None, quiet=False):
+    """シェルコマンドを実行し、出力をそのまま画面に流す。
+    ノートブックの「!コマンド」の代わり（この本体は普通のPythonとして書く）。"""
+    p = subprocess.Popen(cmd, shell=True, cwd=cwd, text=True, bufsize=1,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in p.stdout:
+        if not quiet:
+            print(line, end='')
+    p.wait()
+    return p.returncode
+
+
+WEBUI_DIR = '/content/drive/MyDrive/stable-diffusion-webui'
+os.environ['GIT_TERMINAL_PROMPT'] = '0'   # gitが認証待ちで固まるのを防ぐ（git実行より前に置く）
+
+# ===== GPU確認 =====
+if subprocess.run('nvidia-smi', shell=True, capture_output=True).returncode != 0:
+    print('GPUが設定されていないので、設定を確認してください')
+    print('「ランタイム」→「ランタイムのタイプを変更」→ GPU（T4）を選んでください')
+    runtime.unassign()
+
+# ===== ドライブのマウント =====
+try:
+    drive.mount('/content/drive')          # マウント済みなら何もしない
+    os.listdir('/content/drive/MyDrive')   # ★本当に読めるか実際に確かめる
+except Exception as e:
+    raise SystemExit(
+        f'\n【中断】Googleドライブにアクセスできません（{e}）\n'
+        '  1. メニューの「ランタイム」→「ランタイムを接続解除して削除」\n'
+        '     ※「再起動」では直りません。必ず「削除」を選んでください\n'
+        '  2. つなぎ直して、このセルをもう一度実行してください\n'
+    )
+
+# ドライブの空き容量（不足していると書き込みに失敗してマウントごと落ちる）
+try:
+    _s = os.statvfs('/content/drive/MyDrive')
+    _free_gb = _s.f_bavail * _s.f_frsize / (1024 ** 3)
+    print(f'ドライブの空き容量：約 {_free_gb:.1f} GB')
+    if _free_gb < 3:
+        print('⚠️ 空き容量が少なすぎます。3GB以上空けてから実行してください')
+except Exception:
+    pass
+
+# ===== WebUI本体 =====
+os.chdir('/content/drive/MyDrive')
+if not os.path.exists('stable-diffusion-webui'):
+    print('WebUI本体を取得しています…')
+    sh('git clone -q https://github.com/bmxrebot0619-sys/stable-diffusion-webui')
+
+# ============================================================
+# ★2026-08-19 修正の中心
+#   repositories フォルダをドライブから内蔵ディスクへ逃がす。
+#   ・中身は起動時に自動で作り直されるので、ドライブに置く必要がない
+#   ・ここが壊れると Bus error でドライブのマウントごと落ちる
+#   ・内蔵ディスクなら毎回まっさらなので、壊れたまま残ることがない
+#   （旧版にあった repositories/generative-models での「git stash」は削除。
+#     後続の git pull が無く、何の役にも立たないまま壊れたファイルを踏むだけの行だった）
+# ============================================================
+REPOS_LOCAL = '/content/repositories'
+REPOS_LINK = os.path.join(WEBUI_DIR, 'repositories')
+
+os.makedirs(REPOS_LOCAL, exist_ok=True)
+if os.path.islink(REPOS_LINK):
+    os.unlink(REPOS_LINK)
+elif os.path.isdir(REPOS_LINK):
+    print('ドライブ上の repositories を片付けています（起動時に自動で作り直されます）…')
+    shutil.rmtree(REPOS_LINK, ignore_errors=True)
+    sh(f'rm -rf "{REPOS_LINK}"', quiet=True)
+os.symlink(REPOS_LOCAL, REPOS_LINK)
+print('✅ repositories を内蔵ディスクに切り替えました')
+
+# ===== 拡張機能の置き場所 =====
+EXT_LINK = os.path.join(WEBUI_DIR, 'extensions')              # WebUIが見る場所
+EXT_ONDRIVE = os.path.join(WEBUI_DIR, 'extensions_on_drive')  # 退避先（絶対に消さない）
+EXT_LOCAL = '/content/extensions'
+use_local_ext = str(_opt('拡張機能の置き場所', 'ドライブ（おすすめ）')).startswith('ローカル')
+
+if use_local_ext:
+    os.makedirs(EXT_LOCAL, exist_ok=True)
+    if os.path.isdir(EXT_LINK) and not os.path.islink(EXT_LINK):
+        if os.path.exists(EXT_ONDRIVE):
+            print('⚠️ 退避先がすでにあります。ドライブ側はそのまま残します')
+        else:
+            os.rename(EXT_LINK, EXT_ONDRIVE)
+            print('ドライブの extensions を extensions_on_drive に退避しました（消していません）')
+    if os.path.isdir(EXT_LINK) and not os.path.islink(EXT_LINK):
+        print('⚠️ 切り替えできませんでした。ドライブのまま続行します')
+    else:
+        if os.path.islink(EXT_LINK):
+            os.unlink(EXT_LINK)
+        os.symlink(EXT_LOCAL, EXT_LINK)
+        print('✅ 拡張機能を内蔵ディスクに切り替えました（毎回入れ直します）')
+else:
+    if os.path.islink(EXT_LINK):
+        os.unlink(EXT_LINK)
+    if not os.path.exists(EXT_LINK) and os.path.isdir(EXT_ONDRIVE):
+        os.rename(EXT_ONDRIVE, EXT_LINK)
+        print('退避していた拡張機能をドライブに戻しました')
+    os.makedirs(EXT_LINK, exist_ok=True)
+
+# ===== 拡張機能（無い物だけ入れる） =====
+os.chdir(EXT_LINK)
+exts = [
+    "Bing-su/adetailer",
+    "zixaphir/Stable-Diffusion-Webui-Civitai-Helper",
+    "adieyal/sd-dynamic-prompts",
+    "Mikubill/sd-webui-controlnet",
+    "AI-Creators-Society/stable-diffusion-webui-localization-ja_JP",
+    "AlUlkesh/stable-diffusion-webui-images-browser",
+    "sugarkwork/mozaikukun",
+    "picobyte/stable-diffusion-webui-wd14-tagger",
+    "blue-pen5805/sdweb-easy-prompt-selector",
+]
+for ext in exts:
+    ext_name = ext.split('/')[-1]
+    if not os.path.exists(ext_name):
+        print(f'拡張機能を入れています: {ext_name}')
+        sh(f'git clone -q https://github.com/{ext}')
+
+# sd-dynamic-promptsのファイルが壊れている場合は再クローン
+if not os.path.exists('sd-dynamic-prompts/scripts/dynamic_prompting.py'):
+    sh('rm -rf sd-dynamic-prompts', quiet=True)
+    sh('git clone -q https://github.com/adieyal/sd-dynamic-prompts')
+
+sh(f'rm -f "{EXT_LINK}/mozaikukun/install.py"', quiet=True)
+
+# ===== Python 3.10 環境 =====
+print('Python 3.10 を用意しています…')
+sh('rm -f /etc/apt/sources.list.d/*ubuntugis* /etc/apt/sources.list.d/*graphics-drivers* '
+   '/etc/apt/sources.list.d/*deadsnakes*', quiet=True)
+sh('apt update -y -qq', quiet=True)
+sh('apt install python3.10-venv python3.10-dev -y --fix-missing', quiet=True)
+sh('curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10', quiet=True)
+
+# ===== 自動切断タイマー =====
+_cut_map = {"無制限": -1, "1時間": 3600, "2時間": 7200, "3時間": 10800,
+            "4時間": 14400, "6時間": 21600, "8時間": 28800}
+_cut_label = str(_opt('自動切断', '無制限'))
+cut_time = _cut_map.get(_cut_label, -1)
+
+# セルを何度実行してもタイマーが増えないよう、前のタイマーを止めてから張り直す
+_prev = globals().get('_auto_cut_timer')
+if _prev is not None:
+    try:
+        _prev.cancel()
+    except Exception:
+        pass
+_auto_cut_timer = None
+if cut_time != -1:
+    _auto_cut_timer = threading.Timer(cut_time, runtime.unassign)
+    _auto_cut_timer.daemon = True
+    _auto_cut_timer.start()
+    print(f'自動切断：{_cut_label}後にランタイムを切断します')
+
+os.environ["STABLE_DIFFUSION_REPO"] = "https://github.com/Kantyadoram/stable-diffusion-stability-ai.git"
+os.environ["STABLE_DIFFUSION_COMMIT_HASH"] = "7435a5be1050962a936a4ef624b43814ee8824a8"
+
+print("セットアップ完了")
+
+# ===== 実行環境（venv）を作る =====
+if not os.path.exists(WEBUI_DIR):
+    raise SystemExit('エラー: stable-diffusion-webuiフォルダが見つかりません')
+
+os.chdir(WEBUI_DIR)
+if os.path.exists('/content/venv'):
+    shutil.rmtree('/content/venv')
+
+print("環境を構築中...")
+sh('python3.10 -m venv /content/venv', quiet=True)
+VENV_PYTHON = "/content/venv/bin/python"
+VENV_PIP = "/content/venv/bin/pip"
+
+for _cmd in [
+    f'{VENV_PYTHON} -m pip install -q "pip==23.3.1" setuptools wheel',
+    f'{VENV_PIP} install -q -r requirements_versions.txt',
+    f'{VENV_PIP} install -q git+https://github.com/openai/CLIP.git --no-build-isolation',
+    f'{VENV_PIP} install -q "fastapi==0.94.0" "pydantic<2.0.0" "typing-extensions>=4.5.0" '
+    f'"protobuf==3.20.3" pytorch-lightning==1.9.4 '
+    f'"dynamicprompts[attentiongrabber,magicprompt]~=0.31.0" "send2trash~=1.8"',
+    f'{VENV_PIP} install -q rich ultralytics controlnet_aux',
+    f'{VENV_PIP} install -q "Pillow==10.4.0" "numpy==1.26.4" "urllib3<2.0.0"',
+    f'{VENV_PIP} install -q "opencv-python-headless==4.10.0.84" --force-reinstall --no-deps',
+]:
+    sh(_cmd + ' 2>/dev/null', quiet=True)
+
+# ===== 常用設定をUIの初期値に焼き込む =====
+# 値はノートブック側のプルダウン・入力欄から受け取る（この本体には書かない）
+_uicfg_path = os.path.join(WEBUI_DIR, 'ui-config.json')
+try:
+    with open(_uicfg_path, encoding="utf-8") as _f:
+        _ui = json.load(_f)
+    _updates = {
+        "txt2img/Prompt/value": _opt('FIXED_PROMPT_PREFIX', ''),
+        "txt2img/Negative prompt/value": _opt('FIXED_NEGATIVE', ''),
+        "txt2img/Width/value": _opt('DEF_WIDTH', 832),
+        "txt2img/Height/value": _opt('DEF_HEIGHT', 1216),
+        "txt2img/CFG Scale/value": _opt('DEF_CFG', 3),
+        "customscript/sampler.py/txt2img/Sampling steps/value": _opt('DEF_STEPS', 30),
+        "customscript/sampler.py/txt2img/Sampling method/value": _opt('DEF_SAMPLER', 'DPM++ 2M'),
+        "txt2img/Hires. fix/value": _opt('DEF_HIRES', True),
+        "txt2img/Upscaler/value": _opt('DEF_UPSCALER', 'Latent'),
+        "txt2img/Upscale by/value": _opt('DEF_UPSCALE_BY', 1.5),
+        "txt2img/Hires steps/value": _opt('DEF_HIRES_STEPS', 10),
+        "txt2img/Denoising strength/value": _opt('DEF_DENOISE', 0.5),
+    }
+    for _k, _v in _updates.items():
+        if _k in _ui:  # 既存のキーだけ更新（存在しないキーは触らない＝安全）
+            _ui[_k] = _v
+    with open(_uicfg_path, "w", encoding="utf-8") as _f:
+        json.dump(_ui, _f, ensure_ascii=False, indent=4)
+    print("✅ UIの初期値を常用設定に更新しました（次の起動からこの値で始まります）")
+except Exception as _e:
+    print(f"⚠️ UI初期値の更新をスキップ（ui-config.jsonが未生成かも）: {_e}")
+
+print("起動中...（少し待つと https://〜.gradio.live のリンクが出ます）")
+sh(f'{VENV_PYTHON} launch.py --share --enable-insecure-extension-access '
+   f'--disable-safe-unpickle --no-half-vae --skip-install', cwd=WEBUI_DIR)
