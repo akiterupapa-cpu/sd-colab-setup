@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-19a'
+SETUP_VERSION = '2026-08-19b'
 
 import os, shutil, threading, json, subprocess
 from google.colab import drive, runtime
@@ -26,7 +26,10 @@ def _opt(name, default):
 def sh(cmd, cwd=None, quiet=False):
     """シェルコマンドを実行し、出力をそのまま画面に流す。
     ノートブックの「!コマンド」の代わり（この本体は普通のPythonとして書く）。"""
+    # ★PYTHONUNBUFFERED を必ず付ける。パイプで受けると子プロセス側が
+    #   出力をブロックバッファリングし、画面に何も出てこなくなる（2026-08-19b で修正）
     p = subprocess.Popen(cmd, shell=True, cwd=cwd, text=True, bufsize=1,
+                         env=dict(os.environ, PYTHONUNBUFFERED='1'),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in p.stdout:
         if not quiet:
@@ -190,7 +193,7 @@ os.chdir(WEBUI_DIR)
 if os.path.exists('/content/venv'):
     shutil.rmtree('/content/venv')
 
-print("環境を構築中...")
+print("環境を構築中...（3〜5分かかります。画面が止まって見えても待ってください）")
 sh('python3.10 -m venv /content/venv', quiet=True)
 VENV_PYTHON = "/content/venv/bin/python"
 VENV_PIP = "/content/venv/bin/pip"
@@ -237,6 +240,26 @@ try:
 except Exception as _e:
     print(f"⚠️ UI初期値の更新をスキップ（ui-config.jsonが未生成かも）: {_e}")
 
-print("起動中...（少し待つと https://〜.gradio.live のリンクが出ます）")
-sh(f'{VENV_PYTHON} launch.py --share --enable-insecure-extension-access '
-   f'--disable-safe-unpickle --no-half-vae --skip-install', cwd=WEBUI_DIR)
+print("起動中...（1〜2分ほどで、下に https://〜.gradio.live のリンクが出ます）")
+print("※このセルは動かしたままにしてください。止めるとリンクも切れます。\n")
+
+# ★「-u」と PYTHONUNBUFFERED の両方が必要。
+#   どちらか欠けると出力が溜め込まれ、gradioのアドレスが画面に出てこない
+#   （2026-08-19b：アドレスが表示されないという報告を受けて修正）
+_launch_cmd = (f'{VENV_PYTHON} -u launch.py --share --enable-insecure-extension-access '
+               f'--disable-safe-unpickle --no-half-vae --skip-install')
+_p = subprocess.Popen(_launch_cmd, shell=True, cwd=WEBUI_DIR, text=True, bufsize=1,
+                      env=dict(os.environ, PYTHONUNBUFFERED='1'),
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+_shown = False
+for _line in _p.stdout:
+    print(_line, end='')
+    if 'gradio.live' in _line and not _shown:
+        _url = [w for w in _line.split() if 'gradio.live' in w]
+        if _url:
+            _shown = True
+            print('\n' + '=' * 54)
+            print('  ★ Stable Diffusion はこちらから開いてください')
+            print(f'  {_url[0].rstrip(chr(34) + chr(39) + ",")}')
+            print('=' * 54 + '\n')
+_p.wait()
