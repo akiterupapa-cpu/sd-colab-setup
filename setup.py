@@ -7,9 +7,19 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-19b'
+SETUP_VERSION = '2026-08-19c'
 
 import os, shutil, threading, json, subprocess
+
+# ★これを消してはいけない（2026-08-19c で復活させた）
+#   Colab は MPLBACKEND に 'module://matplotlib_inline.backend_inline' を入れており、
+#   これがそのまま venv 側の python に引き継がれると、matplotlib が
+#   「そんなバックエンドは無い」と ValueError を投げて launch.py が起動前に死ぬ。
+#   元のコードに最初から入っていた1行を、整理のつもりで削ったのが原因だった。
+import matplotlib
+matplotlib.use('Agg')
+os.environ['MPLBACKEND'] = 'Agg'
+
 from google.colab import drive, runtime
 
 print('=' * 54)
@@ -249,7 +259,7 @@ print("※このセルは動かしたままにしてください。止めると�
 _launch_cmd = (f'{VENV_PYTHON} -u launch.py --share --enable-insecure-extension-access '
                f'--disable-safe-unpickle --no-half-vae --skip-install')
 _p = subprocess.Popen(_launch_cmd, shell=True, cwd=WEBUI_DIR, text=True, bufsize=1,
-                      env=dict(os.environ, PYTHONUNBUFFERED='1'),
+                      env=dict(os.environ, PYTHONUNBUFFERED='1', MPLBACKEND='Agg'),
                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 _shown = False
 for _line in _p.stdout:
@@ -263,3 +273,15 @@ for _line in _p.stdout:
             print(f'  {_url[0].rstrip(chr(34) + chr(39) + ",")}')
             print('=' * 54 + '\n')
 _p.wait()
+
+# ★リンクが出ないまま終わった＝失敗。黙って終わらせず、何が起きたかを必ず出す
+#   （2026-08-19c：エラーが出ているのに「アドレスが出ない」としか分からず、
+#     原因の切り分けに何往復もしたため追加）
+if not _shown:
+    print('\n' + '=' * 54)
+    print('  ⚠️ アドレスが出ないまま終了しました')
+    print('=' * 54)
+    print('  上に出ている赤い文字（Traceback）の【最後の1行】を')
+    print('  田口さんに送ってください。それだけで原因が分かります。')
+    print('  ※長い部分は全部ノイズなので、送らなくて大丈夫です。')
+    print('=' * 54)
