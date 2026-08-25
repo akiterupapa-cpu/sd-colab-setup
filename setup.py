@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-19c'
+SETUP_VERSION = '2026-08-24a'
 
 import os, shutil, threading, json, subprocess
 
@@ -94,24 +94,62 @@ if not os.path.exists('stable-diffusion-webui'):
 #   （旧版にあった repositories/generative-models での「git stash」は削除。
 #     後続の git pull が無く、何の役にも立たないまま壊れたファイルを踏むだけの行だった）
 # ============================================================
+def can_symlink_here(base):
+    """このドライブでシンボリックリンクが作れるか、壊さずに試す。
+    ★Googleドライブは対応していないことがある（OSError: [Errno 95] Operation not supported）。
+      2026-08-24a：ここで落ちて起動できない報告があったため、
+      「作れる前提」をやめて、作れないなら黙ってドライブ上のまま進める形にした。"""
+    probe = os.path.join(base, '.symlink_probe')
+    try:
+        if os.path.islink(probe) or os.path.exists(probe):
+            os.unlink(probe)
+        os.symlink('/content', probe)
+        os.unlink(probe)
+        return True
+    except OSError:
+        try:
+            if os.path.islink(probe):
+                os.unlink(probe)
+        except OSError:
+            pass
+        return False
+
+
 REPOS_LOCAL = '/content/repositories'
 REPOS_LINK = os.path.join(WEBUI_DIR, 'repositories')
+SYMLINK_OK = can_symlink_here(WEBUI_DIR)
 
-os.makedirs(REPOS_LOCAL, exist_ok=True)
-if os.path.islink(REPOS_LINK):
-    os.unlink(REPOS_LINK)
-elif os.path.isdir(REPOS_LINK):
-    print('ドライブ上の repositories を片付けています（起動時に自動で作り直されます）…')
-    shutil.rmtree(REPOS_LINK, ignore_errors=True)
-    sh(f'rm -rf "{REPOS_LINK}"', quiet=True)
-os.symlink(REPOS_LOCAL, REPOS_LINK)
-print('✅ repositories を内蔵ディスクに切り替えました')
+if SYMLINK_OK:
+    # ★作れると確認できたときだけ、片付けてから切り替える。
+    #   確認せずに消すと「消したのにリンクが張れない」最悪の状態になる
+    os.makedirs(REPOS_LOCAL, exist_ok=True)
+    if os.path.islink(REPOS_LINK):
+        os.unlink(REPOS_LINK)
+    elif os.path.isdir(REPOS_LINK):
+        print('ドライブ上の repositories を片付けています（起動時に自動で作り直されます）…')
+        shutil.rmtree(REPOS_LINK, ignore_errors=True)
+        sh(f'rm -rf "{REPOS_LINK}"', quiet=True)
+    try:
+        os.symlink(REPOS_LOCAL, REPOS_LINK)
+        print('✅ repositories を内蔵ディスクに切り替えました')
+    except OSError as _e:
+        os.makedirs(REPOS_LINK, exist_ok=True)
+        print(f'ℹ️ repositories はドライブ上のまま使います（{_e.strerror}）')
+else:
+    # ドライブ上のまま。元のコードと同じ状態で、これで長く問題なく動いていた。
+    # 本来の不具合（毎回走る git stash）は削除済みなので、ここは無くても直っている
+    os.makedirs(REPOS_LINK, exist_ok=True)
+    print('ℹ️ repositories はドライブ上のまま使います（このドライブはリンク非対応）')
 
 # ===== 拡張機能の置き場所 =====
 EXT_LINK = os.path.join(WEBUI_DIR, 'extensions')              # WebUIが見る場所
 EXT_ONDRIVE = os.path.join(WEBUI_DIR, 'extensions_on_drive')  # 退避先（絶対に消さない）
 EXT_LOCAL = '/content/extensions'
 use_local_ext = str(_opt('拡張機能の置き場所', 'ドライブ（おすすめ）')).startswith('ローカル')
+if use_local_ext and not SYMLINK_OK:
+    # リンクが作れないドライブでは切り替えられない。退避だけして戻れなくなるのを防ぐ
+    print('⚠️ このドライブはリンク非対応のため、拡張機能はドライブのまま使います')
+    use_local_ext = False
 
 if use_local_ext:
     os.makedirs(EXT_LOCAL, exist_ok=True)
