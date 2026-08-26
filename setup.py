@@ -7,9 +7,9 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-24c'
+SETUP_VERSION = '2026-08-24d'
 
-import os, shutil, threading, json, subprocess, time
+import os, re, shutil, threading, json, subprocess, time
 
 # ★これを消してはいけない（2026-08-19c で復活させた）
 #   Colab は MPLBACKEND に 'module://matplotlib_inline.backend_inline' を入れており、
@@ -356,9 +356,29 @@ _launch_cmd = (f'{VENV_PYTHON} -u launch.py --share --enable-insecure-extension-
 _p = subprocess.Popen(_launch_cmd, shell=True, cwd=WEBUI_DIR, text=True, bufsize=1,
                       env=dict(os.environ, PYTHONUNBUFFERED='1', MPLBACKEND='Agg'),
                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+# ★出力を垂れ流さない（2026-08-24d）
+#   生成のたびに出る進捗バー（12%|█▌ …）を全部ノートブックに書き込むと、
+#   保存されるファイルが巨大になり、次に開いたとき真っ黒のまま開けなくなる。
+#   ブラウザのメモリも食い潰すため、生成中に切れる原因にもなりうる。
+_PROGRESS_RE = re.compile(r'\d+%\|')
+_IMPORTANT_RE = re.compile(r'(Error|error|ERROR|Traceback|Exception|Errno|gradio\.live|\[監視\])')
+_MAX_LINES = 3000
 _shown = False
-for _line in _p.stdout:
-    print(_line, end='')
+_printed = 0
+_skipped = 0
+for _raw in _p.stdout:
+    # 進捗バーは \r で上書きされる。最後の状態だけ見ればよい
+    _line = _raw.split('\r')[-1] if '\r' in _raw else _raw
+    if _PROGRESS_RE.search(_line):
+        _skipped += 1
+        continue
+    if _printed >= _MAX_LINES and not _IMPORTANT_RE.search(_line):
+        _skipped += 1
+        if _skipped % 2000 == 0:
+            print(f'…（出力が多いため省略中：{_skipped}行。エラーと監視は必ず表示します）', flush=True)
+        continue
+    print(_line, end='' if _line.endswith('\n') else '\n')
+    _printed += 1
     if 'gradio.live' in _line and not _shown:
         _url = [w for w in _line.split() if 'gradio.live' in w]
         if _url:
