@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-24a'
+SETUP_VERSION = '2026-08-24b'
 
 import os, shutil, threading, json, subprocess
 
@@ -52,10 +52,23 @@ WEBUI_DIR = '/content/drive/MyDrive/stable-diffusion-webui'
 os.environ['GIT_TERMINAL_PROMPT'] = '0'   # gitが認証待ちで固まるのを防ぐ（git実行より前に置く）
 
 # ===== GPU確認 =====
-if subprocess.run('nvidia-smi', shell=True, capture_output=True).returncode != 0:
+# ★★ここで runtime.unassign()＝ランタイム切断 を呼ぶ。条件を広げてはいけない。
+#   2026-08-24b：「終了コードが0以外なら切る」に書き換えていたため、
+#   nvidia-smi が一時的に失敗しただけ（NVMLエラー等・GPUは正常）でも切断してしまい、
+#   「何もしていないのに勝手に切れる」状態になっていた。
+#   元のコードと同じ「コマンドが存在しないときだけ」に戻した。
+#   ★誤判定で切るのは、続行して失敗するより害が大きい。迷ったら切らない側に倒す。
+_gpu = subprocess.run('nvidia-smi', shell=True, capture_output=True, text=True)
+_gpu_out = (_gpu.stdout or '') + (_gpu.stderr or '')
+if 'not found' in _gpu_out or 'No such file' in _gpu_out:
     print('GPUが設定されていないので、設定を確認してください')
-    print('「ランタイム」→「ランタイムのタイプを変更」→ GPU（T4）を選んでください')
+    print('「ランタイム」→「ランタイムのタイプを変更」→ GPU を選んでください')
     runtime.unassign()
+elif _gpu.returncode != 0:
+    # 切らない。警告だけ出して続行する
+    _first = _gpu_out.strip().splitlines()[0] if _gpu_out.strip() else '（出力なし）'
+    print(f'⚠️ nvidia-smi が一時的に応答しませんでした（{_first}）')
+    print('   GPU自体は使える可能性が高いので、このまま続行します')
 
 # ===== ドライブのマウント =====
 try:

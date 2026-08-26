@@ -50,6 +50,14 @@ for w in NG:
         fail.append(f'個人設定らしき文字列が含まれている: {w}')
 print('✅ 個人設定の混入なし' if not any(w in src for w in NG[:3]) else '')
 
+# 6) ランタイム切断の条件を広げていないこと（誤判定で切ると「勝手に切れる」になる）
+if "runtime.unassign()" in src:
+    if "'not found' in _gpu_out" not in src:
+        fail.append("GPU判定が『コマンドが無いとき』以外でも切断しうる "
+                    "→ nvidia-smi の一時的な失敗でランタイムが落ちる")
+    else:
+        print('✅ 切断条件（コマンド不在時のみ）')
+
 print('-' * 46)
 if fail:
     print('❌ 検品NG')
