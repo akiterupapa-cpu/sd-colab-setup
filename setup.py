@@ -7,9 +7,9 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-24b'
+SETUP_VERSION = '2026-08-24c'
 
-import os, shutil, threading, json, subprocess
+import os, shutil, threading, json, subprocess, time
 
 # ★これを消してはいけない（2026-08-19c で復活させた）
 #   Colab は MPLBACKEND に 'module://matplotlib_inline.backend_inline' を入れており、
@@ -46,6 +46,48 @@ def sh(cmd, cwd=None, quiet=False):
             print(line, end='')
     p.wait()
     return p.returncode
+
+
+
+def _start_resource_watch(interval=60):
+    """60秒ごとに RAM・ローカルディスク・ドライブの生死を1行で出す。
+
+    ★目的は「落ちた瞬間に何が限界だったか」を出力に残すこと。
+      切れたあともColabのセルに最後の1行が残るので、それだけで死因が分かる。
+      読むだけ・出すだけで、動作には一切影響しない。
+    """
+    def _loop():
+        while True:
+            try:
+                mem = {}
+                with open('/proc/meminfo') as f:
+                    for ln in f:
+                        k, _, v = ln.partition(':')
+                        mem[k] = int(v.strip().split()[0])
+                total = mem.get('MemTotal', 0) / 1048576
+                avail = mem.get('MemAvailable', 0) / 1048576
+                used = total - avail
+                pct = (used / total * 100) if total else 0
+                st = os.statvfs('/content')
+                local_free = st.f_bavail * st.f_frsize / (1024 ** 3)
+                try:
+                    os.listdir('/content/drive/MyDrive')
+                    drive = 'OK'
+                except OSError as e:
+                    drive = f'切断({e.errno})'
+                warn = '  ⚠️メモリ逼迫' if pct >= 85 else ''
+                print(f'[監視] RAM {used:.1f}/{total:.1f}GB({pct:.0f}%)  '
+                      f'ローカル空き {local_free:.1f}GB  ドライブ {drive}{warn}', flush=True)
+            except Exception:
+                pass
+            time.sleep(interval)
+
+    prev = globals().get('_res_watch')
+    if prev is None or not prev.is_alive():
+        t = threading.Thread(target=_loop, daemon=True)
+        t.start()
+        globals()['_res_watch'] = t
+        print('✅ 監視を開始しました（60秒ごとに [監視] の行が出ます）')
 
 
 WEBUI_DIR = '/content/drive/MyDrive/stable-diffusion-webui'
@@ -301,7 +343,9 @@ try:
 except Exception as _e:
     print(f"⚠️ UI初期値の更新をスキップ（ui-config.jsonが未生成かも）: {_e}")
 
+_start_resource_watch()
 print("起動中...（1〜2分ほどで、下に https://〜.gradio.live のリンクが出ます）")
+print("★もし生成の途中で切れたら、いちばん下の [監視] の行をそのまま送ってください。")
 print("※このセルは動かしたままにしてください。止めるとリンクも切れます。\n")
 
 # ★「-u」と PYTHONUNBUFFERED の両方が必要。
