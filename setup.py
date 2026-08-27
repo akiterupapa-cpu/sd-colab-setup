@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-24d'
+SETUP_VERSION = '2026-08-27a'
 
 import os, re, shutil, threading, json, subprocess, time
 
@@ -56,6 +56,8 @@ def _start_resource_watch(interval=60):
       切れたあともColabのセルに最後の1行が残るので、それだけで死因が分かる。
       読むだけ・出すだけで、動作には一切影響しない。
     """
+    _t0 = time.time()
+
     def _loop():
         while True:
             try:
@@ -76,7 +78,11 @@ def _start_resource_watch(interval=60):
                 except OSError as e:
                     drive = f'切断({e.errno})'
                 warn = '  ⚠️メモリ逼迫' if pct >= 85 else ''
-                print(f'[監視] RAM {used:.1f}/{total:.1f}GB({pct:.0f}%)  '
+                # ★経過時間を出す。毎回だいたい同じ時間で切れるならColab側の時間切り、
+                #   バラバラならブラウザ側の偶発的な切断と判別できる（2026-08-27a）
+                el = int(time.time() - _t0)
+                elapsed = f'{el // 3600}時間{el % 3600 // 60:02d}分' if el >= 3600 else f'{el // 60}分'
+                print(f'[監視] 起動から{elapsed}  RAM {used:.1f}/{total:.1f}GB({pct:.0f}%)  '
                       f'ローカル空き {local_free:.1f}GB  ドライブ {drive}{warn}', flush=True)
             except Exception:
                 pass
