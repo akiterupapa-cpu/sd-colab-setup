@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-27a'
+SETUP_VERSION = '2026-08-27b'
 
 import os, re, shutil, threading, json, subprocess, time
 
@@ -82,8 +82,17 @@ def _start_resource_watch(interval=60):
                 #   バラバラならブラウザ側の偶発的な切断と判別できる（2026-08-27a）
                 el = int(time.time() - _t0)
                 elapsed = f'{el // 3600}時間{el % 3600 // 60:02d}分' if el >= 3600 else f'{el // 60}分'
-                print(f'[監視] 起動から{elapsed}  RAM {used:.1f}/{total:.1f}GB({pct:.0f}%)  '
-                      f'ローカル空き {local_free:.1f}GB  ドライブ {drive}{warn}', flush=True)
+                line = (f'起動から{elapsed}  RAM {used:.1f}/{total:.1f}GB({pct:.0f}%)  '
+                        f'ローカル空き {local_free:.1f}GB  ドライブ {drive}{warn}')
+                print(f'[監視] {line}', flush=True)
+                # ★ドライブにも残す。セッションが死ぬと画面の出力ごと消えてしまい、
+                #   「何分で・どういう状態で落ちたか」が分からなくなるため（2026-08-27b）
+                try:
+                    jst = time.strftime('%m/%d %H:%M', time.gmtime(time.time() + 9 * 3600))
+                    with open(SESSION_LOG, 'a', encoding='utf-8') as _lf:
+                        _lf.write(f'{jst}  {line}\n')
+                except Exception:
+                    pass
             except Exception:
                 pass
             time.sleep(interval)
@@ -137,6 +146,27 @@ try:
     print(f'ドライブの空き容量：約 {_free_gb:.1f} GB')
     if _free_gb < 3:
         print('⚠️ 空き容量が少なすぎます。3GB以上空けてから実行してください')
+except Exception:
+    pass
+
+# ===== 前回のセッションがどう終わったかを表示 =====
+# ★落ちたときの記録が画面から消えても、ここに残る
+SESSION_LOG = os.path.join(WEBUI_DIR, '_session_log.txt')
+try:
+    with open(SESSION_LOG, encoding='utf-8') as _lf:
+        _prev = [l for l in _lf.read().splitlines() if l.strip()]
+    if _prev:
+        print('-' * 54)
+        print('  前回のセッションの最後の記録（ここで落ちました）')
+        for _l in _prev[-2:]:
+            print(f'  {_l}')
+        print('-' * 54)
+except Exception:
+    pass
+try:
+    _jst = time.strftime('%m/%d %H:%M', time.gmtime(time.time() + 9 * 3600))
+    with open(SESSION_LOG, 'a', encoding='utf-8') as _lf:
+        _lf.write(f'===== {_jst} 起動 (版 {SETUP_VERSION}) =====\n')
 except Exception:
     pass
 
