@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-08-27b'
+SETUP_VERSION = '2026-09-10a'
 
 import os, re, shutil, threading, json, subprocess, time
 
@@ -299,6 +299,22 @@ sh('apt update -y -qq', quiet=True)
 sh('apt install python3.10-venv python3.10-dev -y --fix-missing', quiet=True)
 sh('curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10', quiet=True)
 
+# ★2026-09-10追加：ここが失敗しても quiet=True で握りつぶされ、
+#   ずっと後段の「/content/venv/bin/python: not found」としてしか症状に出ず、
+#   本当の原因（apt installの失敗内容）が見えなかった。
+#   ここで python3.10 自体の有無を実際に確かめ、無ければ本当のエラーを出して止める。
+if not shutil.which('python3.10'):
+    print('\n' + '=' * 54)
+    print('  ⚠️ python3.10 の用意に失敗しました')
+    print('=' * 54)
+    _diag = subprocess.run('apt-get install python3.10-venv python3.10-dev -y --fix-missing',
+                           shell=True, capture_output=True, text=True)
+    print((( _diag.stdout or '') + (_diag.stderr or '')).strip()[-3000:] or '（エラー出力なし）')
+    raise SystemExit(
+        '\n【中断】python3.10 の用意に失敗しました。\n'
+        '  上に出ている赤い文字（エラー内容）の最後の数行を田口さんに送ってください。\n'
+    )
+
 # ===== 自動切断タイマー =====
 _cut_map = {"無制限": -1, "1時間": 3600, "2時間": 7200, "3時間": 10800,
             "4時間": 14400, "6時間": 21600, "8時間": 28800}
@@ -336,6 +352,20 @@ print("環境を構築中...（3〜5分かかります。画面が止まって�
 sh('python3.10 -m venv /content/venv', quiet=True)
 VENV_PYTHON = "/content/venv/bin/python"
 VENV_PIP = "/content/venv/bin/pip"
+
+# ★2026-09-10追加：venv作成の失敗も検知せず、後続がいきなり
+#   「/content/venv/bin/python: not found」で落ちて原因が分からなかった。
+#   ここで実際にできているか確かめ、無ければ本当のエラーを出して止める。
+if not os.path.exists(VENV_PYTHON):
+    print('\n' + '=' * 54)
+    print('  ⚠️ Python実行環境(venv)の作成に失敗しました')
+    print('=' * 54)
+    _diag = subprocess.run('python3.10 -m venv /content/venv', shell=True, capture_output=True, text=True)
+    print(((_diag.stdout or '') + (_diag.stderr or '')).strip() or '（エラー出力なし）')
+    raise SystemExit(
+        '\n【中断】venv の作成に失敗しました。\n'
+        '  上に出ている赤い文字（エラー内容）の最後の数行を田口さんに送ってください。\n'
+    )
 
 for _cmd in [
     f'{VENV_PYTHON} -m pip install -q "pip==23.3.1" setuptools wheel',
