@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-09-10a'
+SETUP_VERSION = '2026-09-10b'
 
 import os, re, shutil, threading, json, subprocess, time
 
@@ -297,17 +297,30 @@ sh('rm -f /etc/apt/sources.list.d/*ubuntugis* /etc/apt/sources.list.d/*graphics-
    '/etc/apt/sources.list.d/*deadsnakes*', quiet=True)
 sh('apt update -y -qq', quiet=True)
 sh('apt install python3.10-venv python3.10-dev -y --fix-missing', quiet=True)
+
+# ★2026-09-10b追加：Colabがベースイメージの既定を Python 3.12 に切り替えた影響で、
+#   標準リポジトリに python3.10 自体が無いケースが出てきた
+#   （E: Unable to locate package python3.10-venv / python3.10-dev）。
+#   複数Pythonバージョン配布の定番である deadsnakes PPA から取り直す。
+#   WebUI本体がPython3.10前提のため、3.12へ乗り換える方向にはしない。
+if not shutil.which('python3.10'):
+    print('  標準リポジトリに python3.10 が見つからないため、deadsnakes PPA から取得します…')
+    sh('apt install -y software-properties-common', quiet=True)
+    sh('add-apt-repository -y ppa:deadsnakes/ppa', quiet=True)
+    sh('apt update -y -qq', quiet=True)
+    sh('apt install python3.10 python3.10-venv python3.10-dev -y --fix-missing', quiet=True)
+
 sh('curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10', quiet=True)
 
-# ★2026-09-10追加：ここが失敗しても quiet=True で握りつぶされ、
+# ★2026-09-10a追加：ここが失敗しても quiet=True で握りつぶされ、
 #   ずっと後段の「/content/venv/bin/python: not found」としてしか症状に出ず、
 #   本当の原因（apt installの失敗内容）が見えなかった。
 #   ここで python3.10 自体の有無を実際に確かめ、無ければ本当のエラーを出して止める。
 if not shutil.which('python3.10'):
     print('\n' + '=' * 54)
-    print('  ⚠️ python3.10 の用意に失敗しました')
+    print('  ⚠️ python3.10 の用意に失敗しました（deadsnakes PPA追加後も解決せず）')
     print('=' * 54)
-    _diag = subprocess.run('apt-get install python3.10-venv python3.10-dev -y --fix-missing',
+    _diag = subprocess.run('apt-get install python3.10 python3.10-venv python3.10-dev -y --fix-missing',
                            shell=True, capture_output=True, text=True)
     print((( _diag.stdout or '') + (_diag.stderr or '')).strip()[-3000:] or '（エラー出力なし）')
     raise SystemExit(
