@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-09-10b'
+SETUP_VERSION = '2026-09-17a'
 
 import os, re, shutil, threading, json, subprocess, time
 
@@ -347,6 +347,33 @@ if cut_time != -1:
     _auto_cut_timer.daemon = True
     _auto_cut_timer.start()
     print(f'自動切断：{_cut_label}後にランタイムを切断します')
+
+# ===== タブ操作の自動維持（任意・既定OFF） =====
+# ★背景（2026-09-17）：生成は別タブ（gradio.liveのリンク）で行うため、
+#   このColabノートブックのタブ自体は誰にも触られないまま放置される。
+#   GPUは正常に動いていても、Colab側は「操作されていないタブ」とみなして
+#   セッションを切ることがある（RAM・ディスクは正常なまま突然切れる、という報告と一致）。
+#   ここでは無害なマウス移動イベントを定期的に流すだけで、実際のボタン操作は一切しない。
+# ★既定は False。既存・今後のノートブックを問わず、明示的にONにした人だけに効かせる
+#   （公開リポジトリ＝全員のGoogleアカウントで動くため、無断で有効化しない）。
+if bool(_opt('タブ操作を自動維持', False)):
+    try:
+        from IPython.display import Javascript, display
+        display(Javascript('''
+        (function(){
+          if (window.__sdKeepAlive) clearInterval(window.__sdKeepAlive);
+          window.__sdKeepAlive = setInterval(function(){
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              bubbles: true,
+              clientX: Math.floor(Math.random() * window.innerWidth),
+              clientY: Math.floor(Math.random() * window.innerHeight),
+            }));
+          }, 60000);
+        })();
+        '''))
+        print('✅ タブ操作の自動維持を開始しました（Colabがアイドルと誤認しにくくなります）')
+    except Exception as _e:
+        print(f'⚠️ タブ操作の自動維持を開始できませんでした（続行します）: {_e}')
 
 os.environ["STABLE_DIFFUSION_REPO"] = "https://github.com/Kantyadoram/stable-diffusion-stability-ai.git"
 os.environ["STABLE_DIFFUSION_COMMIT_HASH"] = "7435a5be1050962a936a4ef624b43814ee8824a8"
