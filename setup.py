@@ -7,7 +7,7 @@
 # 置き場所: https://github.com/akiterupapa-cpu/sd-colab-setup
 # 呼び出し元: ノートブックの1セル目（notebook_cell.py 参照）
 # ============================================================
-SETUP_VERSION = '2026-09-17a'
+SETUP_VERSION = '2026-10-22a'
 
 import os, re, shutil, threading, json, subprocess, time
 
@@ -298,35 +298,46 @@ sh('rm -f /etc/apt/sources.list.d/*ubuntugis* /etc/apt/sources.list.d/*graphics-
 sh('apt update -y -qq', quiet=True)
 sh('apt install python3.10-venv python3.10-dev -y --fix-missing', quiet=True)
 
-# ★2026-09-10b追加：Colabがベースイメージの既定を Python 3.12 に切り替えた影響で、
-#   標準リポジトリに python3.10 自体が無いケースが出てきた
-#   （E: Unable to locate package python3.10-venv / python3.10-dev）。
-#   複数Pythonバージョン配布の定番である deadsnakes PPA から取り直す。
-#   WebUI本体がPython3.10前提のため、3.12へ乗り換える方向にはしない。
-if not shutil.which('python3.10'):
-    print('  標準リポジトリに python3.10 が見つからないため、deadsnakes PPA から取得します…')
-    sh('apt install -y software-properties-common', quiet=True)
-    sh('add-apt-repository -y ppa:deadsnakes/ppa', quiet=True)
-    sh('apt update -y -qq', quiet=True)
-    sh('apt install python3.10 python3.10-venv python3.10-dev -y --fix-missing', quiet=True)
+def _py310_ok(path):
+    """その python3.10 が実際に動き、venv を作れるかを確かめる（あるだけでは信用しない）。"""
+    if not path:
+        return False
+    return subprocess.run([path, '-c', 'import venv, ensurepip'],
+                          capture_output=True).returncode == 0
 
-sh('curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10', quiet=True)
+
+# ★2026-10-22変更：apt で python3.10 を入れる道は、Colab（Ubuntu 24.04）側の
+#   パッケージ事情で壊れることがある。09-10は「標準に無い」→deadsnakes PPAで逃げたが、
+#   10-22は deadsnakes でも「python3.10-minimal が入らない（unmet dependencies）」で止まった。
+#   apt に頼り続ける限り Colab 側の変化のたびに止まるため、
+#   apt で駄目なら uv（Python配布ツール）で apt を使わない単体の python3.10 を取ってくる。
+#   WebUI本体がPython3.10前提のため、3.12へ乗り換える方向にはしない。
+PY310 = shutil.which('python3.10')
+_py_diag = ''
+if _py310_ok(PY310):
+    sh(f'curl -sS https://bootstrap.pypa.io/get-pip.py | "{PY310}"', quiet=True)
+else:
+    print('  標準の方法で python3.10 を用意できなかったため、配布版の python3.10 を取得します…')
+    sh('pip install -q -U uv', quiet=True)
+    _uv_env = dict(os.environ, UV_PYTHON_PREFERENCE='only-managed')
+    _r = subprocess.run('uv python install 3.10', shell=True, capture_output=True, text=True, env=_uv_env)
+    _f = subprocess.run('uv python find 3.10', shell=True, capture_output=True, text=True, env=_uv_env)
+    PY310 = (_f.stdout or '').strip().splitlines()[-1] if (_f.stdout or '').strip() else None
+    _py_diag = ((_r.stdout or '') + (_r.stderr or '') + (_f.stderr or '')).strip()
 
 # ★2026-09-10a追加：ここが失敗しても quiet=True で握りつぶされ、
 #   ずっと後段の「/content/venv/bin/python: not found」としてしか症状に出ず、
-#   本当の原因（apt installの失敗内容）が見えなかった。
-#   ここで python3.10 自体の有無を実際に確かめ、無ければ本当のエラーを出して止める。
-if not shutil.which('python3.10'):
+#   本当の原因が見えなかった。python3.10 が実際に動くか確かめ、駄目なら本当のエラーを出して止める。
+if not _py310_ok(PY310):
     print('\n' + '=' * 54)
-    print('  ⚠️ python3.10 の用意に失敗しました（deadsnakes PPA追加後も解決せず）')
+    print('  ⚠️ python3.10 の用意に失敗しました（apt・配布版の両方で失敗）')
     print('=' * 54)
-    _diag = subprocess.run('apt-get install python3.10 python3.10-venv python3.10-dev -y --fix-missing',
-                           shell=True, capture_output=True, text=True)
-    print((( _diag.stdout or '') + (_diag.stderr or '')).strip()[-3000:] or '（エラー出力なし）')
+    print(_py_diag[-3000:] or '（エラー出力なし）')
     raise SystemExit(
         '\n【中断】python3.10 の用意に失敗しました。\n'
         '  上に出ている赤い文字（エラー内容）の最後の数行を田口さんに送ってください。\n'
     )
+print(f'  python3.10：{PY310}')
 
 # ===== 自動切断タイマー =====
 _cut_map = {"無制限": -1, "1時間": 3600, "2時間": 7200, "3時間": 10800,
@@ -389,7 +400,7 @@ if os.path.exists('/content/venv'):
     shutil.rmtree('/content/venv')
 
 print("環境を構築中...（3〜5分かかります。画面が止まって見えても待ってください）")
-sh('python3.10 -m venv /content/venv', quiet=True)
+sh(f'"{PY310}" -m venv /content/venv', quiet=True)
 VENV_PYTHON = "/content/venv/bin/python"
 VENV_PIP = "/content/venv/bin/pip"
 
@@ -400,7 +411,7 @@ if not os.path.exists(VENV_PYTHON):
     print('\n' + '=' * 54)
     print('  ⚠️ Python実行環境(venv)の作成に失敗しました')
     print('=' * 54)
-    _diag = subprocess.run('python3.10 -m venv /content/venv', shell=True, capture_output=True, text=True)
+    _diag = subprocess.run(f'"{PY310}" -m venv /content/venv', shell=True, capture_output=True, text=True)
     print(((_diag.stdout or '') + (_diag.stderr or '')).strip() or '（エラー出力なし）')
     raise SystemExit(
         '\n【中断】venv の作成に失敗しました。\n'
